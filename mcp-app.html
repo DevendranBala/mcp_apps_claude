@@ -214,6 +214,59 @@
     .btn-success { background: var(--success); color: white; }
     .btn-danger { background: var(--danger); color: white; }
     
+    /* Select Phone Button */
+    .select-phone-btn {
+      background: linear-gradient(135deg, var(--att-blue), #00a8e8);
+      color: white;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .select-phone-btn:hover { background: linear-gradient(135deg, #004a9e, #0090cc); }
+    
+    /* Selected Phone Banner (shown in plans view) */
+    .selected-phone-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(135deg, #eff6ff, #dbeafe);
+      border: 1.5px solid #93c5fd;
+      border-radius: 12px;
+      padding: 12px 16px;
+      margin: 0 0 12px 0;
+    }
+    .selected-phone-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .selected-phone-icon {
+      font-size: 1.4rem;
+    }
+    .selected-phone-info strong {
+      display: block;
+      font-size: 0.92rem;
+      color: var(--text);
+    }
+    .selected-phone-price {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .selected-phone-change {
+      background: none;
+      border: 1px solid #93c5fd;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      color: var(--att-blue);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .selected-phone-change:hover {
+      background: white;
+    }
+    
     /* Plan Cards */
     .plan-card {
       flex-shrink: 0;
@@ -954,33 +1007,30 @@
     .store-map-container {
       background: var(--card);
       border-radius: 12px;
-      padding: 0;
+      padding: 12px;
       margin-bottom: 16px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
-      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
     
     .store-map-svg {
       width: 100%;
       height: auto;
+      border-radius: 8px;
       display: block;
-      border-bottom: 1px solid var(--border);
     }
     
     .store-map-svg .store-pin { cursor: pointer; }
-    .store-map-svg .store-pin:hover { opacity: 0.85; }
+    .store-map-svg .store-pin:hover circle:first-of-type { fill: rgba(0,87,184,0.1) !important; }
     
     .map-legend {
       display: flex;
       gap: 16px;
-      padding: 8px 12px;
-      font-size: 0.72rem;
+      padding: 8px 4px 0;
+      font-size: 0.75rem;
       color: var(--text-muted);
-      background: rgba(250,251,252,0.8);
     }
     
     .legend-item { display: flex; align-items: center; gap: 5px; }
-    .legend-hint { margin-left: auto; font-style: italic; opacity: 0.7; }
     
     .legend-dot {
       width: 10px;

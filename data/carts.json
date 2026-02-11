@@ -1,1 +1,16 @@
-{}
+{
+  "default": {
+    "items": [
+      {
+        "id": "ATT-IP17",
+        "name": "iPhone 17 (Cosmic Orange, 256GB)",
+        "price": 899.99,
+        "quantity": 1,
+        "type": "product",
+        "color": "Cosmic Orange",
+        "storage": "256GB"
+      }
+    ],
+    "promo_code": null
+  }
+}

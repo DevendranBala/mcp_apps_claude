@@ -111,25 +111,27 @@ interface StoreLocation {
   address2?: string;
   city?: string;
   state?: string;
-  region?: string;
   postalcode?: string;
-  postal?: string;
   phone?: string;
   latitude?: number;
   longitude?: number;
-  lat?: number;
-  lon?: number;
   distance?: number;
-  arcdist?: number;
   hours?: string;
-  sundayopen?: string; sundayclose?: string;
-  mondayopen?: string; mondayclose?: string;
-  tuesdayopen?: string; tuesdayclose?: string;
-  wednesdayopen?: string; wednesdayclose?: string;
-  thursdayopen?: string; thursdayclose?: string;
-  fridayopen?: string; fridayclose?: string;
-  saturdayopen?: string; saturdayclose?: string;
-  [key: string]: unknown;
+  sundayopen?: string;
+  sundayclose?: string;
+  mondayopen?: string;
+  mondayclose?: string;
+  tuesdayopen?: string;
+  tuesdayclose?: string;
+  wednesdayopen?: string;
+  wednesdayclose?: string;
+  thursdayopen?: string;
+  thursdayclose?: string;
+  fridayopen?: string;
+  fridayclose?: string;
+  saturdayopen?: string;
+  saturdayclose?: string;
+  [key: string]: unknown; // Allow dynamic field access for hours parsing
 }
 
 interface StoreSearchResult {
@@ -156,18 +158,6 @@ interface HistoryEntry {
 // ============================================================
 
 const appContainer = document.getElementById("app")!;
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function debugLog(_msg: string, _data?: unknown): void {
-  // Disabled - no logging
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function showDebugPanel(): void {
-  // Disabled - no debug panel
-}
-
-// Create app instance
 const app = new App({ name: "AT&T Shopping", version: "1.0.0" });
 
 let currentView: ViewType = "phones";
@@ -314,12 +304,88 @@ widgetChannel.onmessage = (e: MessageEvent<WidgetEvent>) => {
 };
 
 // Helper functions to load views via server tools
+
+/**
+ * Extract and parse JSON data from MCP tool results.
+ * Handles the MCP framework's double-wrapping: the actual data may be inside
+ * result.content[0].text → JSON.parse → { text: "<inner JSON string>" }
+ * This unwraps all layers to get the real data.
+ */
+function parseToolResult(result: unknown): unknown | null {
+  if (!result) return null;
+  const r = result as Record<string, unknown>;
+  
+  // Step 1: Extract text string from content blocks
+  let text = "";
+  if (Array.isArray(r?.content)) {
+    const blocks = r.content as Record<string, unknown>[];
+    // Prefer JSON-looking blocks (for two-block responses like store locator)
+    for (const b of blocks) {
+      if (b.type === "text" && typeof b.text === "string") {
+        const t = (b.text as string).trim();
+        if (t.startsWith("{") || t.startsWith("[")) { text = t; break; }
+      }
+    }
+    // Fallback: first text block
+    if (!text) {
+      const first = blocks.find(b => b.type === "text" && typeof b.text === "string");
+      if (first) text = (first.text as string).trim();
+    }
+  }
+  if (!text) return null;
+  
+  // Step 2: Parse outer JSON
+  let data: unknown;
+  try { data = JSON.parse(text); } catch { return null; }
+  
+  // Step 3: Unwrap { text: "<json string>" } envelope (MCP framework double-wrapping)
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const obj = data as Record<string, unknown>;
+    // If the only key (or primary key) is "text" and its value is a JSON string, unwrap it
+    if (typeof obj.text === "string") {
+      const inner = (obj.text as string).trim();
+      if (inner.startsWith("{") || inner.startsWith("[")) {
+        try { data = JSON.parse(inner); } catch { /* keep outer data */ }
+      }
+    }
+    // Also handle { structuredContent: {...} } wrapping
+    if (typeof obj.structuredContent === "object" && obj.structuredContent !== null) {
+      data = obj.structuredContent;
+    }
+  }
+  
+  return data;
+}
+
+/**
+ * Extract raw text content from MCP tool result (for success/error messages).
+ * Unwraps { text: "..." } envelope if present.
+ */
+function extractResultText(result: unknown): string {
+  if (!result) return "";
+  const r = result as Record<string, unknown>;
+  let text = "";
+  if (Array.isArray(r?.content)) {
+    const block = (r.content as Record<string, unknown>[]).find(b => b.type === "text" && typeof b.text === "string");
+    if (block) text = block.text as string;
+  }
+  if (!text) return "";
+  // Unwrap { text: "..." } envelope
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && typeof parsed.text === "string") {
+      return parsed.text;
+    }
+  } catch { /* not JSON, use raw */ }
+  return text;
+}
+
 async function loadPhones(): Promise<void> {
   try {
     const result = await app.callServerTool({ name: "get_phones", arguments: {} });
-    const text = result.content?.find(c => c.type === "text")?.text;
-    if (text) {
-      currentData = JSON.parse(text);
+    const data = parseToolResult(result);
+    if (data) {
+      currentData = data;
       currentView = "phones";
       currentPage = 0;
       render();
@@ -330,9 +396,9 @@ async function loadPhones(): Promise<void> {
 async function loadPlans(): Promise<void> {
   try {
     const result = await app.callServerTool({ name: "get_wireless_plans", arguments: {} });
-    const text = result.content?.find(c => c.type === "text")?.text;
-    if (text) {
-      currentData = JSON.parse(text);
+    const data = parseToolResult(result);
+    if (data) {
+      currentData = data;
       currentView = "plans";
       currentPage = 0;
       render();
@@ -343,9 +409,9 @@ async function loadPlans(): Promise<void> {
 async function loadCart(): Promise<void> {
   try {
     const result = await app.callServerTool({ name: "get_cart", arguments: {} });
-    const text = result.content?.find(c => c.type === "text")?.text;
-    if (text) {
-      currentData = JSON.parse(text);
+    const data = parseToolResult(result);
+    if (data) {
+      currentData = data;
       currentView = "cart";
       render();
     }
@@ -432,9 +498,9 @@ async function fetchCartState(): Promise<void> {
       name: "get_cart",
       arguments: {},
     });
-    const text = result.content?.find(c => c.type === "text")?.text;
-    if (text) {
-      cartState = JSON.parse(text);
+    const data = parseToolResult(result);
+    if (data) {
+      cartState = data as CartData;
       updateCartBadge();
     }
   } catch (e) {
@@ -499,9 +565,9 @@ function updateCartBadge(): void {
           name: "get_cart",
           arguments: {},
         });
-        const text = result.content?.find(c => c.type === "text")?.text;
-        if (text) {
-          currentData = JSON.parse(text);
+        const data = parseToolResult(result);
+        if (data) {
+          currentData = data;
           currentView = "cart";
           render();
         }
@@ -1354,32 +1420,44 @@ function formatStoreTime(timeStr: string): string {
 }
 
 function getStoreHoursForDay(store: StoreLocation, dayIndex: number): { open: string; close: string } {
-  const full = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
-  const ab2 = ["su","mo","tu","we","th","fr","sa"];
-  const ab3 = ["sun","mon","tue","wed","thu","fri","sat"];
+  // dayIndex: 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const dayName = dayNames[dayIndex];
   const s = store as Record<string, unknown>;
-  const tryKeys = (suffix: string) => {
-    for (const d of [full[dayIndex], ab3[dayIndex], ab2[dayIndex]]) {
-      for (const sep of ["", "_"]) {
-        const v = s[`${d}${sep}${suffix}`] || s[`${d}${sep}${suffix.charAt(0).toUpperCase()+suffix.slice(1)}`];
-        if (v) return String(v).trim();
-      }
-    }
-    return "";
+  
+  // Try multiple possible field name patterns
+  const openVal = 
+    s[`${dayName}open`] || s[`${dayName}Open`] || s[`${dayName}_open`] ||
+    s[`${dayName}start`] || s[`${dayName}Start`] || s[`${dayName}_start`] ||
+    s[`open_${dayName}`] || s[`start_${dayName}`] || "";
+  const closeVal = 
+    s[`${dayName}close`] || s[`${dayName}Close`] || s[`${dayName}_close`] ||
+    s[`${dayName}end`] || s[`${dayName}End`] || s[`${dayName}_end`] ||
+    s[`close_${dayName}`] || s[`end_${dayName}`] || "";
+  
+  return {
+    open: String(openVal || "").trim(),
+    close: String(closeVal || "").trim(),
   };
-  return { open: tryKeys("open") || tryKeys("start"), close: tryKeys("close") || tryKeys("end") };
 }
 
 // Check if a store has ANY hours data at all
 function storeHasHoursData(store: StoreLocation): boolean {
   const s = store as Record<string, unknown>;
-  const dp = ["sun","mon","tue","wed","thu","fri","sat","su","mo","tu","we","th","fr","sa"];
-  const hp = ["open","close","start","end"];
-  for (const k of Object.keys(s)) {
-    const kl = k.toLowerCase();
-    for (const d of dp) for (const h of hp) if (kl.includes(d) && kl.includes(h) && s[k]) return true;
+  const hourKeyPatterns = ["open", "close", "start", "end"];
+  const dayPatterns = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  
+  for (const key of Object.keys(s)) {
+    const kl = key.toLowerCase();
+    for (const d of dayPatterns) {
+      for (const h of hourKeyPatterns) {
+        if (kl.includes(d) && kl.includes(h) && s[key]) return true;
+      }
+    }
   }
-  return !!(s.hours && String(s.hours).trim());
+  // Also check generic "hours" field
+  if (s.hours && String(s.hours).trim()) return true;
+  return false;
 }
 
 // Parse a generic "hours" string like "Mon-Fri: 9am-8pm, Sat: 10am-6pm, Sun: Closed"
@@ -1390,14 +1468,14 @@ function parseGenericHours(hoursStr: string): { day: string; hours: string }[] |
 }
 
 function getStoreTypeLabel(vtype?: string): string {
-  if (!vtype) return "AT&T Store";
-  if (["4","1003","1005","1006"].includes(String(vtype))) return "Authorized Retailer";
+  if (vtype === "122") return "Company Store";
+  if (vtype === "4") return "Authorized Retailer";
   return "AT&T Store";
 }
 
 function getStoreTypeBadgeClass(vtype?: string): string {
-  if (!vtype) return "store-badge-company";
-  if (["4","1003","1005","1006"].includes(String(vtype))) return "store-badge-authorized";
+  if (vtype === "122") return "store-badge-company";
+  if (vtype === "4") return "store-badge-authorized";
   return "store-badge-company";
 }
 
@@ -1498,140 +1576,82 @@ function parseTimeToMinutes(timeStr: string): number | null {
   return null;
 }
 
-function renderStoreMap(stores: StoreLocation[], searchPostal?: string): string {
+function renderStoreMap(stores: StoreLocation[]): string {
   if (!stores.length) return "";
 
-  // Coordinate helpers — handle both API field name conventions
-  const getLat = (s: StoreLocation): number | null => {
-    const v = s.latitude ?? (s as Record<string, unknown>).lat;
-    return v != null ? Number(v) : null;
-  };
-  const getLng = (s: StoreLocation): number | null => {
-    const v = s.longitude ?? (s as Record<string, unknown>).lon ?? (s as Record<string, unknown>).lng;
-    return v != null ? Number(v) : null;
-  };
+  // Build map pins for all stores
+  const validStores = stores.filter(s => s.latitude && s.longitude);
+  if (!validStores.length) return `<div class="store-map-placeholder"><p>📍 Map unavailable — no coordinates found</p></div>`;
 
-  const validStores = stores.filter(s => getLat(s) != null && getLng(s) != null);
-  if (!validStores.length) {
-    return `<div class="store-map-placeholder"><p>📍 Map unavailable — no coordinates found</p></div>`;
-  }
+  // Calculate map bounds
+  const lats = validStores.map(s => s.latitude!);
+  const lngs = validStores.map(s => s.longitude!);
+  const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+  const latSpan = Math.max(Math.max(...lats) - Math.min(...lats), 0.02);
+  const lngSpan = Math.max(Math.max(...lngs) - Math.min(...lngs), 0.02);
 
-  // Calculate bounds with padding
-  const lats = validStores.map(s => getLat(s)!);
-  const lngs = validStores.map(s => getLng(s)!);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const latSpan = Math.max(maxLat - minLat, 0.015);
-  const lngSpan = Math.max(maxLng - minLng, 0.015);
-  const centerLat = (minLat + maxLat) / 2;
-  const centerLng = (minLng + maxLng) / 2;
-  // Add 30% padding around points
-  const padLat = latSpan * 0.3;
-  const padLng = lngSpan * 0.3;
+  // Generate SVG map with pins
+  const mapWidth = 600;
+  const mapHeight = 300;
+  const padding = 40;
 
-  const W = 640, H = 320;
-
-  // Convert geo coords to SVG coords
-  const toX = (lng: number) => ((lng - (centerLng - lngSpan / 2 - padLng)) / (lngSpan + 2 * padLng)) * W;
-  const toY = (lat: number) => H - ((lat - (centerLat - latSpan / 2 - padLat)) / (latSpan + 2 * padLat)) * H;
-
-  // Approximate scale bar (degrees to miles at this latitude)
-  const milesPerDegLng = 69.172 * Math.cos(centerLat * Math.PI / 180);
-  const totalMilesShown = (lngSpan + 2 * padLng) * milesPerDegLng;
-  const scaleBarMiles = totalMilesShown < 5 ? 1 : totalMilesShown < 15 ? 5 : 10;
-  const scaleBarPx = (scaleBarMiles / totalMilesShown) * W;
-
-  // Generate unique ID prefix for this map instance (avoids gradient ID conflicts)
-  const mapId = `map-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-  // Generate subtle "road" grid pattern — pseudo-random based on bounds
-  const gridLines: string[] = [];
-  const seed = Math.abs(Math.round(centerLat * 1000 + centerLng * 1000));
-  for (let i = 0; i < 8; i++) {
-    const offset = ((seed * (i + 1) * 7) % 100) / 100;
-    if (i < 4) {
-      // Horizontal "roads"
-      const y = H * 0.1 + offset * H * 0.8;
-      const x1 = ((seed * (i + 3)) % 40);
-      gridLines.push(`<line x1="${x1}" y1="${y}" x2="${W - (seed * (i + 2)) % 50}" y2="${y + ((i % 2 === 0 ? 1 : -1) * 8)}" stroke="#d4dde6" stroke-width="${i < 2 ? 2.5 : 1.2}" stroke-linecap="round" opacity="0.6"/>`);
-    } else {
-      // Vertical "roads"
-      const x = W * 0.1 + offset * W * 0.8;
-      const y1 = ((seed * (i + 1)) % 30);
-      gridLines.push(`<line x1="${x}" y1="${y1}" x2="${x + ((i % 2 === 0 ? 1 : -1) * 6)}" y2="${H - (seed * i) % 40}" stroke="#d4dde6" stroke-width="${i < 6 ? 2.5 : 1.2}" stroke-linecap="round" opacity="0.5"/>`);
-    }
-  }
-  // A few diagonal "highways"
-  gridLines.push(`<line x1="0" y1="${H * 0.7}" x2="${W}" y2="${H * 0.2}" stroke="#c8d5e0" stroke-width="3" stroke-linecap="round" opacity="0.35"/>`);
-  gridLines.push(`<line x1="${W * 0.15}" y1="0" x2="${W * 0.85}" y2="${H}" stroke="#c8d5e0" stroke-width="2.5" stroke-linecap="round" opacity="0.3"/>`);
-
-  // Build pins using simpler, more compatible shapes
   const pins = validStores.map((store, i) => {
-    const x = toX(getLng(store)!);
-    const y = toY(getLat(store)!);
+    const x = padding + ((store.longitude! - (centerLng - lngSpan / 2)) / lngSpan) * (mapWidth - 2 * padding);
+    const y = padding + ((1 - (store.latitude! - (centerLat - latSpan / 2)) / latSpan)) * (mapHeight - 2 * padding);
     const isSelected = i === selectedStoreIndex;
-    const isCompany = !store.vtype || ["122","1016","1002","1000","1020","1004"].includes(String(store.vtype));
-    const color = isSelected ? "#0057b8" : (isCompany ? "#009FDB" : "#f59e0b");
-    const r = isSelected ? 16 : 13;
-    const storeName = (store.name || store.mystore_name || "AT&T Store").slice(0, 18);
+    const pinSize = isSelected ? 14 : 10;
+    const color = isSelected ? "#0057b8" : (store.vtype === "122" ? "#00a8e8" : "#f59e0b");
 
-    // Use simpler circle + triangle pin shape for better compatibility
     return `
-      <g class="store-pin" data-store-select="${i}" style="cursor:pointer" role="button" aria-label="Store ${i + 1}: ${storeName}">
-        ${isSelected ? `<circle cx="${x}" cy="${y}" r="${r + 8}" fill="none" stroke="${color}" stroke-width="2" opacity="0.3"/>` : ""}
-        <!-- Pin shadow -->
-        <ellipse cx="${x}" cy="${y + r + 3}" rx="${r * 0.5}" ry="3" fill="rgba(0,0,0,0.12)"/>
-        <!-- Pin body (circle) -->
-        <circle cx="${x}" cy="${y}" r="${r}" fill="${color}" stroke="white" stroke-width="2"/>
-        <!-- Pin pointer (triangle) -->
-        <polygon points="${x},${y + r + 6} ${x - 5},${y + r - 2} ${x + 5},${y + r - 2}" fill="${color}" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
-        <!-- Number -->
-        <text x="${x}" y="${y + 1}" text-anchor="middle" dominant-baseline="middle" fill="white"
-              font-size="${isSelected ? 13 : 11}" font-weight="700" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">${i + 1}</text>
-        ${isSelected ? `
-        <!-- Name label -->
-        <rect x="${x - 58}" y="${y - r - 28}" width="116" height="22" rx="4" fill="white" stroke="${color}" stroke-width="1.5"/>
-        <text x="${x}" y="${y - r - 14}" text-anchor="middle" fill="#1a1a2e" font-size="10" font-weight="600" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
-          ${storeName}
-        </text>` : ""}
+      <g class="store-pin" data-store-idx="${i}" style="cursor:pointer">
+        <circle cx="${x}" cy="${y}" r="${pinSize + 4}" fill="${isSelected ? "rgba(0,87,184,0.15)" : "transparent"}" />
+        <circle cx="${x}" cy="${y}" r="${pinSize}" fill="${color}" stroke="white" stroke-width="2.5" />
+        <text x="${x}" y="${y + 1}" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="${isSelected ? 10 : 8}" font-weight="700">${i + 1}</text>
+        ${isSelected ? `<circle cx="${x}" cy="${y}" r="${pinSize + 8}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.6"><animateTransform attributeName="transform" type="rotate" from="0 ${x} ${y}" to="360 ${x} ${y}" dur="8s" repeatCount="indefinite"/></circle>` : ""}
       </g>
     `;
   }).join("");
 
-  void searchPostal; // available for future use
-
   return `
     <div class="store-map-container">
-      <svg viewBox="0 0 ${W} ${H}" class="store-map-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;">
+      <svg viewBox="0 0 ${mapWidth} ${mapHeight}" class="store-map-svg" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <linearGradient id="${mapId}-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#eef3f9"/>
-            <stop offset="50%" stop-color="#e8eef6"/>
-            <stop offset="100%" stop-color="#e2eaf4"/>
+          <linearGradient id="mapBg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#f0f7ff"/>
+            <stop offset="100%" style="stop-color:#e8f4f8"/>
           </linearGradient>
+          <filter id="pinShadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.2"/>
+          </filter>
         </defs>
-        <!-- Background -->
-        <rect width="${W}" height="${H}" fill="url(#${mapId}-bg)"/>
-        <!-- Faux terrain blocks -->
-        <rect x="${W * 0.6}" y="${H * 0.1}" width="${W * 0.2}" height="${H * 0.3}" rx="2" fill="#dce7d4" opacity="0.3"/>
-        <rect x="${W * 0.1}" y="${H * 0.55}" width="${W * 0.15}" height="${H * 0.25}" rx="2" fill="#dce7d4" opacity="0.25"/>
-        <circle cx="${W * 0.8}" cy="${H * 0.7}" r="30" fill="#d4e5f0" opacity="0.3"/>
-        <!-- Road grid -->
-        ${gridLines.join("\n        ")}
-        <!-- Store pins -->
-        ${pins}
-        <!-- Scale bar -->
-        <g transform="translate(${W - scaleBarPx - 20}, ${H - 22})">
-          <line x1="0" y1="0" x2="${scaleBarPx}" y2="0" stroke="#555" stroke-width="2" stroke-linecap="round"/>
-          <line x1="0" y1="-4" x2="0" y2="4" stroke="#555" stroke-width="1.5"/>
-          <line x1="${scaleBarPx}" y1="-4" x2="${scaleBarPx}" y2="4" stroke="#555" stroke-width="1.5"/>
-          <text x="${scaleBarPx / 2}" y="12" text-anchor="middle" fill="#555" font-size="9" style="font-family: -apple-system, sans-serif">${scaleBarMiles} mi</text>
-        </g>
+        <rect width="${mapWidth}" height="${mapHeight}" fill="url(#mapBg)" rx="12"/>
+        
+        <!-- Grid lines -->
+        ${Array.from({length: 5}, (_, i) => {
+          const y = padding + (i / 4) * (mapHeight - 2 * padding);
+          return `<line x1="${padding}" y1="${y}" x2="${mapWidth - padding}" y2="${y}" stroke="#d0dfe8" stroke-width="0.5" stroke-dasharray="4,4"/>`;
+        }).join("")}
+        ${Array.from({length: 7}, (_, i) => {
+          const x = padding + (i / 6) * (mapWidth - 2 * padding);
+          return `<line x1="${x}" y1="${padding}" x2="${x}" y2="${mapHeight - padding}" stroke="#d0dfe8" stroke-width="0.5" stroke-dasharray="4,4"/>`;
+        }).join("")}
+        
+        <!-- Distance lines connecting pins -->
+        ${validStores.length > 1 ? validStores.slice(0, -1).map((store, i) => {
+          const nextStore = validStores[i + 1];
+          const x1 = padding + ((store.longitude! - (centerLng - lngSpan / 2)) / lngSpan) * (mapWidth - 2 * padding);
+          const y1 = padding + ((1 - (store.latitude! - (centerLat - latSpan / 2)) / latSpan)) * (mapHeight - 2 * padding);
+          const x2 = padding + ((nextStore.longitude! - (centerLng - lngSpan / 2)) / lngSpan) * (mapWidth - 2 * padding);
+          const y2 = padding + ((1 - (nextStore.latitude! - (centerLat - latSpan / 2)) / latSpan)) * (mapHeight - 2 * padding);
+          return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#0057b8" stroke-width="1" stroke-dasharray="6,4" opacity="0.2"/>`;
+        }).join("") : ""}
+        
+        <g filter="url(#pinShadow)">${pins}</g>
       </svg>
       <div class="map-legend">
-        <span class="legend-item"><span class="legend-dot" style="background:#009FDB"></span> AT&T Store</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#00a8e8"></span> Company Store</span>
         <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span> Authorized Retailer</span>
-        <span class="legend-item legend-hint">Click a pin to select</span>
       </div>
     </div>
   `;
@@ -1665,26 +1685,19 @@ function renderStores(data: StoreSearchResult): string {
 
   const selectedStore = stores[selectedStoreIndex] || stores[0];
   const address = [selectedStore.address1, selectedStore.address2].filter(Boolean).join(", ");
-  const stState = selectedStore.state || (selectedStore as Record<string, unknown>).region as string || "";
-  const stPostal = selectedStore.postalcode || (selectedStore as Record<string, unknown>).postal as string || "";
-  const cityStateZip = [selectedStore.city, stState].filter(Boolean).join(", ") + (stPostal ? ` ${stPostal}` : "");
-  const stDistance = selectedStore.distance ?? (selectedStore as Record<string, unknown>).arcdist as number | undefined;
-  const stLat = selectedStore.latitude ?? (selectedStore as Record<string, unknown>).lat as number | undefined;
-  const stLng = selectedStore.longitude ?? (selectedStore as Record<string, unknown>).lon as number | undefined ?? (selectedStore as Record<string, unknown>).lng as number | undefined;
+  const cityStateZip = [selectedStore.city, selectedStore.state].filter(Boolean).join(", ") + (selectedStore.postalcode ? ` ${selectedStore.postalcode}` : "");
   const todayHours = getTodayHours(selectedStore);
   const allHours = getDayHours(selectedStore);
   const storeType = getStoreTypeLabel(selectedStore.vtype);
 
   // Build store list cards
   const storeListHtml = stores.map((store, i) => {
-    const rec = store as Record<string, unknown>;
-    const dist = store.distance ?? rec.arcdist as number | undefined;
-    const distStr = dist ? `${Number(dist).toFixed(1)} mi` : "";
+    const dist = store.distance ? `${store.distance.toFixed(1)} mi` : "";
     const isActive = i === selectedStoreIndex;
     const stType = getStoreTypeLabel(store.vtype);
     const badgeClass = getStoreTypeBadgeClass(store.vtype);
     const stAddress = [store.address1].filter(Boolean).join(", ");
-    const stCityState = [store.city, store.state || rec.region as string].filter(Boolean).join(", ");
+    const stCity = [store.city, store.state].filter(Boolean).join(", ");
     const stHours = getTodayHours(store);
 
     return `
@@ -1693,9 +1706,9 @@ function renderStores(data: StoreSearchResult): string {
         <div class="store-list-info">
           <div class="store-list-name">${store.name || store.mystore_name || "AT&T Store"}</div>
           <span class="store-type-badge ${badgeClass}">${stType}</span>
-          <div class="store-list-address">${stAddress}<br/>${stCityState}</div>
+          <div class="store-list-address">${stAddress}<br/>${stCity}</div>
           <div class="store-list-meta">
-            ${distStr ? `<span class="store-meta-item">📏 ${distStr}</span>` : ""}
+            ${dist ? `<span class="store-meta-item">📏 ${dist}</span>` : ""}
             <span class="store-meta-item store-hours-status ${stHours.isOpen ? "store-open" : "store-closed"}">${stHours.isOpen ? "●" : "●"} ${stHours.text}</span>
           </div>
         </div>
@@ -1719,9 +1732,7 @@ function renderStores(data: StoreSearchResult): string {
     : `<span class="service-chip">Retail</span><span class="service-chip">Trade-In</span><span class="service-chip">Support</span>`;
 
   const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address + ", " + cityStateZip)}`;
-  const mapsSearchUrl = stLat && stLng
-    ? `https://www.google.com/maps/search/?api=1&query=${stLat},${stLng}`
-    : mapsUrl;
+  const mapsSearchUrl = `https://www.google.com/maps/search/?api=1&query=${selectedStore.latitude},${selectedStore.longitude}`;
 
   return `
     <div class="header">
@@ -1732,7 +1743,7 @@ function renderStores(data: StoreSearchResult): string {
       <div class="nav-info">${stores.length} found</div>
     </div>
 
-    ${renderStoreMap(stores, data.searchPostal)}
+    ${renderStoreMap(stores)}
 
     <div class="store-layout">
       <!-- Store List (Left) -->
@@ -1761,10 +1772,10 @@ function renderStores(data: StoreSearchResult): string {
           <div class="store-detail-value"><a href="tel:${selectedStore.phone}" class="store-phone-link">${selectedStore.phone}</a></div>
         </div>` : ""}
 
-        ${stDistance ? `
+        ${selectedStore.distance ? `
         <div class="store-detail-section">
           <div class="store-detail-label">📏 Distance</div>
-          <div class="store-detail-value">${Number(stDistance).toFixed(1)} miles away</div>
+          <div class="store-detail-value">${selectedStore.distance.toFixed(1)} miles away</div>
         </div>` : ""}
 
         <div class="store-detail-section">
@@ -1801,7 +1812,7 @@ function renderStores(data: StoreSearchResult): string {
             🧭 Get Directions
           </a>
           ${selectedStore.phone ? `<a href="tel:${selectedStore.phone}" class="btn btn-secondary store-action-btn">📞 Call Store</a>` : ""}
-          <a href="${stLat && stLng ? mapsSearchUrl : mapsUrl}" target="_blank" class="btn btn-secondary store-action-btn">🗺️ View on Map</a>
+          <a href="${mapsSearchUrl}" target="_blank" class="btn btn-secondary store-action-btn">🗺️ View on Map</a>
         </div>
 
         <!-- Cross-widget actions -->
@@ -1820,7 +1831,7 @@ function renderStores(data: StoreSearchResult): string {
     </div>
 
     <div class="store-footer">
-      <a href="https://www.att.com/stores/${stPostal ? "?q=" + stPostal : ""}" target="_blank">
+      <a href="https://www.att.com/stores/${selectedStore.postalcode ? "?q=" + selectedStore.postalcode : ""}" target="_blank">
         🌐 View all stores on att.com/stores
       </a>
     </div>
@@ -1909,7 +1920,7 @@ function attachEventListeners(): void {
             },
           });
           
-          const text = result.content?.find(c => c.type === "text")?.text;
+          const text = extractResultText(result);
           const isSuccess = text && (text.includes("ITEM ADDED") || text.includes("✅"));
           
           if (isSuccess) {
@@ -1970,7 +1981,7 @@ function attachEventListeners(): void {
             arguments: { product_id: productId },
           });
           
-          const text = result.content?.find(c => c.type === "text")?.text;
+          const text = extractResultText(result);
           const isSuccess = text && (text.includes("ITEM REMOVED") || text.includes("🗑️"));
           
           if (isSuccess) {
@@ -1982,16 +1993,12 @@ function attachEventListeners(): void {
               name: "get_cart",
               arguments: {},
             });
-            const cartText = cartResult.content?.find(c => c.type === "text")?.text;
-            if (cartText) {
-              try {
-                currentData = JSON.parse(cartText);
-                cartState = currentData as CartData;
-                updateCartBadge();
-                render();
-              } catch (e) {
-                fetchCartState();
-              }
+            const cartData = parseToolResult(cartResult);
+            if (cartData) {
+              currentData = cartData;
+              cartState = cartData as CartData;
+              updateCartBadge();
+              render();
             }
           } else {
             throw new Error("Failed to remove");
@@ -2022,7 +2029,7 @@ function attachEventListeners(): void {
             arguments: { promo_code: code },
           });
           
-          const text = result.content?.find(c => c.type === "text")?.text;
+          const text = extractResultText(result);
           btn.classList.remove("loading");
           
           const isSuccess = text && (text.includes("PROMO CODE APPLIED") || text.includes("🎉"));
@@ -2035,16 +2042,12 @@ function attachEventListeners(): void {
               name: "get_cart",
               arguments: {},
             });
-            const cartText = cartResult.content?.find(c => c.type === "text")?.text;
-            if (cartText) {
-              try {
-                currentData = JSON.parse(cartText);
-                cartState = currentData as CartData;
-                updateCartBadge();
-                render();
-              } catch (e) {
-                fetchCartState();
-              }
+            const promoCartData = parseToolResult(cartResult);
+            if (promoCartData) {
+              currentData = promoCartData;
+              cartState = promoCartData as CartData;
+              updateCartBadge();
+              render();
             }
           } else {
             showToast("error", "Invalid Code", "That promo code is not valid.");
@@ -2069,9 +2072,9 @@ function attachEventListeners(): void {
           name: "get_inventory_summary",
           arguments: {},
         });
-        const text = result.content?.find(c => c.type === "text")?.text;
-        if (text) {
-          currentData = JSON.parse(text);
+        const invData = parseToolResult(result);
+        if (invData) {
+          currentData = invData;
           render();
         }
       } catch (error) {
@@ -2128,11 +2131,10 @@ function attachEventListeners(): void {
     });
   });
 
-  // Map SVG pin click → select store (uses data-store-select, same as list cards)
+  // Map pin click → select store
   document.querySelectorAll(".store-pin").forEach(pin => {
-    pin.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const idx = parseInt((pin as SVGElement).getAttribute("data-store-select") || "0", 10);
+    pin.addEventListener("click", () => {
+      const idx = parseInt((pin as SVGElement).dataset.storeIdx || "0", 10);
       if (idx !== selectedStoreIndex) {
         selectedStoreIndex = idx;
         render();
@@ -2216,170 +2218,67 @@ function attachEventListeners(): void {
 // MCP INTEGRATION
 // ============================================================
 
-// Helper to detect the view type from parsed data
-function detectViewType(data: unknown): ViewType | null {
-  if (!data) return null;
-  
-  // Check for stores FIRST (highest priority for store locator)
-  if (typeof data === "object" && data !== null) {
-    const o = data as Record<string, unknown>;
-    
-    // Store locator response: { stores: [...], totalCount, searchLocation, ... }
-    if (o.stores !== undefined && Array.isArray(o.stores)) {
-      return "stores";
-    }
-    
-    // Cart response: { items, item_count, subtotal, ... }
-    if (o.item_count !== undefined || (o.items !== undefined && Array.isArray(o.items))) {
-      return "cart";
-    }
-    
-    // Inventory response: { total_products, total_stock, ... }
-    if (o.total_products !== undefined) {
-      return "inventory";
-    }
-    
-    // Internet plans wrapped: { plans: [...], qualification_status, ... }
-    if (o.plans && Array.isArray(o.plans)) {
-      const p = o.plans as Record<string, unknown>[];
-      if (p.length > 0 && (p[0]?.speed_down || o.plan_type)) return "internet";
-      if (p.length > 0 && p[0]?.plan_id) return "plans";
-    }
-  }
-  
-  // Array of items
-  if (Array.isArray(data) && data.length > 0) {
-    const f = data[0] as Record<string, unknown>;
-    if (f?.product_id) {
-      return f?.category === "Accessories" ? "accessories" : "phones";
-    }
-    if (f?.plan_id) {
-      return f?.speed_down ? "internet" : "plans";
-    }
-  }
-  
-  return null;
-}
-
 app.ontoolresult = (result) => {
-  debugLog("ontoolresult fired", { 
-    hasContent: !!result?.content, 
-    contentLength: result?.content?.length,
-    types: result?.content?.map(c => c.type)
-  });
-
-  // Search all text content blocks for valid JSON.
-  // Server may return: [summary text, JSON widget data] — we need the JSON block.
-  // NOTE: ChatGPT wraps content in {"text": "..."} format, so we need to unwrap it.
-  const textBlocks: string[] = [];
-  for (const block of (result.content || [])) {
-    if (block.type === "text" && block.text) {
-      let textContent = block.text;
-      
-      // ChatGPT compatibility: unwrap {"text": "..."} wrapper
-      if (textContent.trim().startsWith("{")) {
-        try {
-          const wrapped = JSON.parse(textContent);
-          if (wrapped.text && typeof wrapped.text === "string") {
-            debugLog("Unwrapped ChatGPT text wrapper");
-            textContent = wrapped.text;
-          }
-        } catch { /* not a wrapper, use as-is */ }
-      }
-      
-      textBlocks.push(textContent);
-    }
-  }
-
-  debugLog("textBlocks", { count: textBlocks.length, previews: textBlocks.map(t => t.slice(0, 80)) });
-
-  let data: unknown = null;
-  let detectedView: ViewType | null = null;
-  const rawText = textBlocks[0] || "";
-
-  // Try to find the best JSON block (one that we can detect a view for)
-  // Iterate in REVERSE order since the widget JSON is usually the LAST block
-  for (let i = textBlocks.length - 1; i >= 0; i--) {
-    const text = textBlocks[i];
-    const t = text.trim();
-    if (t.startsWith("{") || t.startsWith("[")) {
-      try {
-        const parsed = JSON.parse(t);
-        const viewType = detectViewType(parsed);
-        debugLog(`Parsed block ${i}`, { viewType, keys: Object.keys(parsed).slice(0, 5) });
-        if (viewType) {
-          data = parsed;
-          detectedView = viewType;
-          break; // Found a valid, recognizable data block
-        } else if (!data) {
-          // Keep first parseable JSON as fallback
-          data = parsed;
-        }
-      } catch (err) { 
-        debugLog(`Parse error block ${i}`, String(err));
-      }
-    }
-  }
+  let data = parseToolResult(result);
   
-  // Fallback: try parsing the raw first block if nothing else worked
-  if (!data && rawText) {
-    try { 
-      data = JSON.parse(rawText);
-      detectedView = detectViewType(data);
-      debugLog("Fallback parse", { detectedView });
-    } catch { /* not JSON */ }
-  }
-
   if (data) {
-    let newView: ViewType = detectedView || currentView;
+    // Determine new view type
+    let newView: ViewType = currentView;
     
-    // Handle special state updates
-    if (newView === "cart") {
-      cartState = data as CartData;
-      updateCartBadge();
-    }
-    if (newView === "stores") {
-      selectedStoreIndex = 0;
+    // Detect view type from data structure
+    if (Array.isArray(data) && data.length > 0) {
+      if ((data[0] as Record<string, unknown>)?.product_id) {
+        newView = (data[0] as Record<string, unknown>)?.category === "Accessories" ? "accessories" : "phones";
+      } else if ((data[0] as Record<string, unknown>)?.plan_id) {
+        newView = (data[0] as Record<string, unknown>)?.speed_down ? "internet" : "plans";
+      }
+    } else if (typeof data === "object" && !Array.isArray(data)) {
+      const obj = data as Record<string, unknown>;
+      if (obj.plans && Array.isArray(obj.plans)) {
+        // Internet response with qualification status
+        const plans = obj.plans as Record<string, unknown>[];
+        if (plans[0]?.speed_down || obj.plan_type) {
+          newView = "internet";
+        } else if (plans[0]?.plan_id) {
+          newView = "plans";
+        }
+      } else if (obj.item_count !== undefined) {
+        newView = "cart";
+        cartState = data as CartData;
+        updateCartBadge();
+      } else if (obj.total_products !== undefined) {
+        newView = "inventory";
+      } else if (obj.stores !== undefined && Array.isArray(obj.stores)) {
+        newView = "stores";
+        selectedStoreIndex = 0;
+      }
+      // Unwrap { products: [...] } envelope
+      else if (Array.isArray(obj.products) && (obj.products as Record<string, unknown>[])[0]?.product_id) {
+        data = obj.products;
+        newView = (obj.products as Record<string, unknown>[])[0]?.category === "Accessories" ? "accessories" : "phones";
+      }
     }
     
-    if (newView === "cart" && currentView !== "cart" && currentData) pushHistory();
+    // Save current state to history before navigating to cart
+    if (newView === "cart" && currentView !== "cart" && currentData) {
+      pushHistory();
+    }
+    
     currentData = data;
     currentPage = 0;
     currentView = newView;
     
-    debugLog("Rendering", { view: newView, dataKeys: Object.keys(data as object) });
     render();
-  } else if (rawText) {
-    debugLog("No JSON found, showing raw");
-    appContainer.innerHTML = `<pre style="padding:20px;white-space:pre-wrap">${rawText}</pre>`;
-  } else {
-    debugLog("ERROR: No data at all!");
-    appContainer.innerHTML = `
-      <div style="padding:20px;text-align:center;">
-        <h3 style="color:#f59e0b;">⚠️ No Data Received</h3>
-        <p style="color:#64748b;font-size:0.9rem;">The widget didn't receive any data from the tool call.</p>
-        <p style="color:#64748b;font-size:0.8rem;">Check the browser console for debug logs.</p>
-      </div>
-    `;
   }
 };
 
-// Show debug panel on load
-showDebugPanel();
-debugLog("Widget loaded, connecting...");
-
 // Initialize app
-app.connect().then(() => {
-  debugLog("app.connect() resolved");
-}).catch((err: Error) => {
-  debugLog("app.connect() error", err.message);
-});
+app.connect();
 
 // Restore shared state from other widgets
 restoreSharedState();
 
 // Fetch cart state on load (after a short delay to ensure connection)
 setTimeout(() => {
-  debugLog("Fetching initial cart state...");
   fetchCartState();
 }, 500);
