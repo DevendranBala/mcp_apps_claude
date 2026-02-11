@@ -954,30 +954,33 @@
     .store-map-container {
       background: var(--card);
       border-radius: 12px;
-      padding: 12px;
+      padding: 0;
       margin-bottom: 16px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      overflow: hidden;
     }
     
     .store-map-svg {
       width: 100%;
       height: auto;
-      border-radius: 8px;
       display: block;
+      border-bottom: 1px solid var(--border);
     }
     
     .store-map-svg .store-pin { cursor: pointer; }
-    .store-map-svg .store-pin:hover circle:first-of-type { fill: rgba(0,87,184,0.1) !important; }
+    .store-map-svg .store-pin:hover { opacity: 0.85; }
     
     .map-legend {
       display: flex;
       gap: 16px;
-      padding: 8px 4px 0;
-      font-size: 0.75rem;
+      padding: 8px 12px;
+      font-size: 0.72rem;
       color: var(--text-muted);
+      background: rgba(250,251,252,0.8);
     }
     
     .legend-item { display: flex; align-items: center; gap: 5px; }
+    .legend-hint { margin-left: auto; font-style: italic; opacity: 0.7; }
     
     .legend-dot {
       width: 10px;

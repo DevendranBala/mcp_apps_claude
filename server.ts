@@ -708,6 +708,41 @@ async function searchAttStores(params: {
       }
     }
 
+    // ── Normalize store fields from AT&T OneMap API ──
+    stores = stores.map(raw => {
+      const s = raw as Record<string, unknown>;
+      const n: AttStoreLocation = { ...raw };
+      if (!n.latitude && s.lat != null) n.latitude = Number(s.lat);
+      if (!n.longitude && s.lon != null) n.longitude = Number(s.lon);
+      if (!n.longitude && s.lng != null) n.longitude = Number(s.lng);
+      if (!n.state && s.region) n.state = String(s.region);
+      if (!n.postalcode && s.postal) n.postalcode = String(s.postal);
+      if (n.distance == null && s.arcdist != null) n.distance = Number(s.arcdist);
+      if (n.distance == null && s.arcdist_km != null) n.distance = Number(s.arcdist_km) * 0.621371;
+      if (n.vtype != null) {
+        const vt = String(n.vtype);
+        if (["122","1016","1002","1000","1020","1004"].includes(vt)) n.vtype = "122";
+        else if (["4","1003","1005","1006"].includes(vt)) n.vtype = "4";
+      }
+      const dayMap: Record<string, string> = {
+        su:"sunday",mo:"monday",tu:"tuesday",we:"wednesday",th:"thursday",fr:"friday",sa:"saturday",
+        sun:"sunday",mon:"monday",tue:"tuesday",wed:"wednesday",thu:"thursday",fri:"friday",sat:"saturday",
+      };
+      for (const key of Object.keys(s)) {
+        const kl = key.toLowerCase();
+        for (const [ab, full] of Object.entries(dayMap)) {
+          if (kl.startsWith(ab) && !kl.startsWith(full)) {
+            const suf = kl.slice(ab.length).replace(/^_/, "");
+            if ((suf === "open" || suf === "start") && !s[`${full}open`] && s[key])
+              (n as Record<string, unknown>)[`${full}open`] = s[key];
+            else if ((suf === "close" || suf === "end") && !s[`${full}close`] && s[key])
+              (n as Record<string, unknown>)[`${full}close`] = s[key];
+          }
+        }
+      }
+      return n;
+    });
+
     const totalCount = (data.allcount as number) || (data.count as number) || (data.totalCount as number) || stores.length;
     const respCode = data.resp_code as number | undefined;
 
@@ -2361,20 +2396,32 @@ IMEI must be exactly 15 digits. Users can find IMEI by dialing *#06#.`,
 
         const locationDesc = args.postal || (args.city && args.state ? `${args.city}, ${args.state}` : "your location");
 
-        // Return structured JSON for the widget to render
+        // Block 1: brief summary for Claude (prevents Claude rendering its own duplicate map card)
+        // Block 2: full JSON for the MCP App widget
+        const ct = result.stores.length;
+        let summary: string;
+        if (ct === 0) {
+          summary = `No AT&T stores found near ${locationDesc}. ${result.message || ""}`;
+        } else {
+          const lines = result.stores.slice(0, 5).map((s, i) => {
+            const nm = s.name || s.mystore_name || "AT&T Store";
+            const d = s.distance != null ? ` (${Number(s.distance).toFixed(1)} mi)` : "";
+            return `  ${i + 1}. ${nm}${d} — ${[s.address1, s.city, s.state].filter(Boolean).join(", ")}`;
+          }).join("\n");
+          summary = `STORE LOCATOR — Full interactive results displayed in the widget above.\nFound ${ct} store${ct !== 1 ? "s" : ""} near ${locationDesc}:\n${lines}\n\nThe widget shows map, hours, phone, directions. Do NOT render a separate map or store list.`;
+        }
+
+        // ChatGPT compatibility: Put JSON data FIRST since ChatGPT only passes
+        // the first content block to widgets. Claude handles multiple blocks fine.
         return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              stores: result.stores,
-              totalCount: result.totalCount,
-              searchLocation: locationDesc,
-              searchPostal: args.postal || "",
-              success: result.success,
-              message: result.message,
-              debug: result.debug,
-            }),
-          }],
+          content: [
+            { type: "text", text: JSON.stringify({
+              stores: result.stores, totalCount: result.totalCount,
+              searchLocation: locationDesc, searchPostal: args.postal || "",
+              success: result.success, message: result.message,
+            })},
+            { type: "text", text: summary },
+          ],
         };
       } catch (error) {
         console.error("Store locator error:", error);
